@@ -1,19 +1,14 @@
 from cProfile import label
 import json
 import pickle
-from tabnanny import verbose
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib
-
-plt.rcParams['text.usetex'] = True
-
 from scipy import linalg
-
 import math
 import time as time_this
-
 from joblib import Parallel, delayed
+
+plt.rcParams['text.usetex'] = True
 
 BETA_MAX = 1000
 BINARY_SEARCH_UPPER_LIMIT = 2 ** 26
@@ -214,7 +209,7 @@ def minimum_interactions_sho(alpha, time, beta_e, epsilon, dim, num_samples=100)
     def f(n, threadpool):
         phi = QHMC(ham_sys=harmonic_oscillator_hamiltonian(dim), env_betas=[beta_e] * n, sys_start_beta=0.0, sim_times=[time] * n, alphas=[alpha] * n, num_monte_carlo=num_samples)
         return phi.simulate_interactions(threadpool)
-    with Parallel(n_jobs=8) as threadpool:
+    with Parallel(n_jobs=10) as threadpool:
         x = binary_search(f, epsilon, threadpool)
         # print("x: ", x)
     if type(x) == type(None):
@@ -230,7 +225,7 @@ def fixed_number_interactions(h_sys, alpha, time, beta_e, num_interactions, num_
     A pair of numpy arrays, the first being the average distance to the target and the second the std of the dist.
     """
     phi = QHMC(ham_sys=h_sys, env_betas=[beta_e] * num_interactions, sys_start_beta=0.0, sim_times=[time] * num_interactions, alphas=[alpha] * num_interactions, num_monte_carlo=num_samples)
-    threadpool = Parallel(n_jobs=8)
+    threadpool = Parallel(n_jobs=10)
     return  phi.simulate_with_random_env(threadpool, gamma_strategy=gamma_strategy)
  
 def generate_alphas_and_times(num_interactions, interactions_per_step, alpha_start, alpha_decay_rate,time_start, time_increase_rate, alpha_cutoff = 1e-10, time_cutoff = 1e10):
@@ -284,7 +279,7 @@ def fixed_number_interactions_with_decay(h_sys,
     """
     alphas, times = generate_alphas_and_times(num_interactions, interactions_per_step, alpha_start, alpha_decay_rate, time_start, time_increase_rate, alpha_cutoff=alpha_cutoff, time_cutoff=time_cutoff)
     phi = QHMC(ham_sys=h_sys, env_betas=[beta_e] * num_interactions, sys_start_beta=0.0, sim_times=times, alphas=alphas, num_monte_carlo=num_samples)
-    threadpool = Parallel(n_jobs=8)
+    threadpool = Parallel(n_jobs=10)
     return phi.simulate_with_random_env(threadpool, gamma_strategy=gamma_strategy)
 
 
@@ -299,7 +294,7 @@ def minimum_interactions_with_random_gamma(hamiltonian, alpha, time, beta_e, eps
     def f(n, threadpool):
         phi = QHMC(ham_sys=hamiltonian, env_betas=[beta_e] * n, sys_start_beta=0.0, sim_times=[time] * n, alphas=[alpha] * n, num_monte_carlo=num_samples)
         return phi.simulate_with_random_env(threadpool, gamma_strategy)[0][-1]
-    with Parallel(n_jobs=8) as threadpool:
+    with Parallel(n_jobs=10) as threadpool:
         x = binary_search(f, epsilon, threadpool)
         # print("x: ", x)
     if type(x) == type(None):
@@ -453,25 +448,6 @@ alpha.
                 dists.append(trace_distance(sample_state, target_state))
             return (sample_state, dists)
 
-        # def sampler():
-        #     sample_state = thermal_state(self.ham_sys, self.sys_start_beta)
-        #     gammas = sample_gammas(avg, h_norm, len(self.betas))
-        #     dists = []
-        #     for ix in range(len(self.betas)):
-        #         if ix % 1000 == 0:
-        #             print(f"{ix / len(self.betas)}% done")
-        #         output = 0.0 * sample_state
-        #         for gamma in gammas:
-        #             rho_env = thermal_state(gamma * self.ham_env_base, self.betas[ix])
-        #             rho_tot = np.kron(sample_state, rho_env)
-        #             g = my_interaction(self.ham_sys.shape[0] * self.ham_env_base.shape[0])
-        #             ham_tot = self.total_hamiltonian + self.alphas[ix] * g
-        #             u = linalg.expm(1j * ham_tot * self.times[ix])
-        #             raw = u @ rho_tot @ u.conj().T
-        #             output += partrace(raw, self.ham_sys.shape[0], self.ham_env_base.shape[0])
-        #         sample_state = output / (len(gammas) * 1.0)
-        #         dists.append(trace_distance(sample_state, target_state))
-        #     return (sample_state, dists)
         parallel_rets = threadpool(delayed(sampler2)() for i in range(self.num_monte_carlo))
         dist_matrix = np.zeros((len(parallel_rets), len(self.betas)))
         ground_state_prob = 0.0
@@ -938,6 +914,48 @@ def plot_sho_error_v_interaction_decay_rate():
         json.dump(results, f)
     return
 
+def plot_sho_tot_time_vs_dim(directory):
+    alpha = 0.01
+    time = 50.0
+    epsilon = 5e-2
+    beta = 1
+    dims = []
+    uniform_vals = []
+    known_vals = []
+    for dim in range(2, 11):
+        dims.append(dim)
+        hamiltonian = harmonic_oscillator_hamiltonian(dim)
+        known = minimum_interactions_with_random_gamma(hamiltonian, alpha, time, beta, epsilon, "spectra_with_noise=0.0")
+        print('dim: ', dim, 'known: ,', known)
+        uniform = minimum_interactions_with_random_gamma(hamiltonian, alpha, time, beta, epsilon, "uniform")
+        print('dim: ', dim, 'uniform: ,', uniform)
+        known_vals.append(known)
+        uniform_vals.append(uniform)
+
+    log_dim = np.log(dims)
+    log_knowns = np.log(known_vals)
+    log_uniform = np.log(uniform_vals)
+    m_known, b_known = np.polyfit(log_dim, log_knowns, 1)
+    m_unif, b_unif = np.polyfit(log_dim, log_uniform, 1)
+
+
+    fig, ax = plt.subplots()
+    ax.plot(dims, known_vals, label='Sample From Spectrum, slope = {:.2}'.format(m_known))
+    ax.plot(dims, uniform_vals, label='Uniform Sampling, slope = {:.2}'.format(m_unif))
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.legend()
+    try:
+        plt.savefig(directory + 'sho_interactions_vs_dim_beta_1.pdf')
+        json_data = {"alpha": alpha, "time": time, "epsilon": epsilon, "beta": beta, "dims": dims, "uniform_gamma": uniform_vals, "spectral_gamma": known_vals}
+        with open(directory + "sh_interactions_vs_dim_beta_1.json", 'w') as f:
+            json.dump(json_data, f)
+        print('data saved successfully.')
+    except:
+        print("could not save file")
+
+    plt.show()
+
 def plot_sho_tot_time_vs_time():
     alphas = np.linspace(0.01, 0.001, 5)
     times = np.logspace(np.log10(25), np.log10(5000.), 30)
@@ -1081,9 +1099,13 @@ def redo_the_epsilon_scaling():
     return
 
 if __name__ == "__main__":
+    print('starting')
+    import sys
     start = time_this.time()
+    directory = sys.argv[1]
+    plot_sho_tot_time_vs_dim(directory)
     # plot_sho_tot_time_vs_time()
-    plot_sho_error_v_interaction()
+    # plot_sho_error_v_interaction()
     # plot_error_v_interaction()
     # plot_sho_interaction_v_beta()
     # h_chain_time_vs_noise()
